@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: death-reverse-server
+    env: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: CLIENT_ORIGIN
+        value: true
