@@ -1,0 +1,22 @@
+{
+  "deathPredict": 1.15,
+  "zeroPredictEarly": 0.2,
+  "zeroPredictLate": 0.35,
+  "reversePredict": 0.38,
+  "high35Predict": 0.85,
+  "high29Predict": 0.6,
+  "high22Predict": 0.35,
+  "lowCardPredict": 0.15,
+  "earlyConservative": 0.82,
+  "lateConservative": 0.72,
+  "tryWinChance": 0.72,
+  "winBonus": 2,
+  "losePenalty": -2,
+  "reverseRisk": 0.18,
+  "deathAvoidPenalty": 0.3,
+  "zeroVsDeathBonus": 1.2,
+  "deathPower": 2.5,
+  "zeroPower": 0.25,
+  "reversePower": 0.85,
+  "normalPowerScale": 39
+}

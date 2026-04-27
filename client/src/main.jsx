@@ -227,6 +227,7 @@ function PredictionPanel({ state, socket }) {
   return (
     <div className="rounded border border-stone-300 bg-white p-4">
       <h2 className="mb-3 text-lg font-semibold">Predict your wins</h2>
+      <p className="mb-3 text-sm text-stone-600">Look at your hand first, then choose your prediction.</p>
       {alreadySubmitted ? (
         <p className="text-sm text-stone-600">Prediction submitted. Waiting for everyone else.</p>
       ) : (
@@ -276,7 +277,7 @@ function relativeSeat(seat, leaderSeat) {
 }
 
 function Hand({ state, socket }) {
-  if (state.phase === "prediction" || state.phase === "roundEnd") return null;
+  if (state.phase === "roundEnd") return null;
   const canPlay = state.currentTurnSeat === state.mySeat;
   return (
     <div className="rounded border border-stone-300 bg-white p-4">
@@ -288,7 +289,7 @@ function Hand({ state, socket }) {
           </button>
         ))}
       </div>
-      {!canPlay && <p className="mt-2 text-sm text-stone-500">Waiting for your turn.</p>}
+      {!canPlay && <p className="mt-2 text-sm text-stone-500">{state.phase === "prediction" ? "Use these cards to make your prediction." : "Waiting for your turn."}</p>}
     </div>
   );
 }

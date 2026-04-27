@@ -2,6 +2,7 @@ import express from "express";
 import http from "http";
 import cors from "cors";
 import { Server } from "socket.io";
+import botParams from "./bot-params.json" with { type: "json" };
 
 const PORT = process.env.PORT || 3001;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || true;
@@ -362,15 +363,15 @@ function predictForBot(room, seat) {
   const hand = room.hands[seat] || [];
   let strength = 0;
   for (const card of hand) {
-    if (card.type === "death") strength += 1.15;
-    else if (card.type === "zero") strength += room.round >= 4 ? 0.35 : 0.2;
-    else if (REVERSE_VALUES.has(card.value)) strength += 0.38;
-    else if (card.value >= 35) strength += 0.85;
-    else if (card.value >= 29) strength += 0.6;
-    else if (card.value >= 22) strength += 0.35;
-    else if (card.value <= 4) strength += 0.15;
+    if (card.type === "death") strength += botParams.deathPredict;
+    else if (card.type === "zero") strength += room.round >= 4 ? botParams.zeroPredictLate : botParams.zeroPredictEarly;
+    else if (REVERSE_VALUES.has(card.value)) strength += botParams.reversePredict;
+    else if (card.value >= 35) strength += botParams.high35Predict;
+    else if (card.value >= 29) strength += botParams.high29Predict;
+    else if (card.value >= 22) strength += botParams.high22Predict;
+    else if (card.value <= 4) strength += botParams.lowCardPredict;
   }
-  const conservative = room.round <= 3 ? 0.82 : 0.72;
+  const conservative = room.round <= 3 ? botParams.earlyConservative : botParams.lateConservative;
   return Math.max(0, Math.min(room.round, Math.round(strength * conservative)));
 }
 
@@ -382,7 +383,7 @@ function playBotCard(room, seat) {
   const won = room.actualWins[seat] || 0;
   const remainingAfterThis = Math.max(0, room.round - room.trickNumber);
   const needWins = prediction - won;
-  const shouldTryWin = needWins > 0 && (needWins >= remainingAfterThis || Math.random() < 0.72);
+  const shouldTryWin = needWins > 0 && (needWins >= remainingAfterThis || Math.random() < botParams.tryWinChance);
   const card = chooseBotCard(room, seat, shouldTryWin);
   const cardIndex = hand.findIndex((entry) => entry.id === card.id);
   const [playedCard] = hand.splice(cardIndex, 1);
@@ -407,14 +408,14 @@ function chooseBotCard(room, seat, shouldTryWin) {
     const projected = [...room.played, { seat, card, order: room.played.length }];
     const currentlyWinning = determineTrickWinner(projected) === seat;
     const power = cardPower(card);
-    const reverseRisk = card.type === "number" && REVERSE_VALUES.has(card.value) ? 0.18 : 0;
-    const deathBonus = card.type === "death" ? 0.3 : 0;
-    const zeroVsDeathBonus = card.type === "zero" && room.played.some((entry) => entry.card.type === "death") ? 1.2 : 0;
+    const reverseRisk = card.type === "number" && REVERSE_VALUES.has(card.value) ? botParams.reverseRisk : 0;
+    const deathBonus = card.type === "death" ? botParams.deathAvoidPenalty : 0;
+    const zeroVsDeathBonus = card.type === "zero" && room.played.some((entry) => entry.card.type === "death") ? botParams.zeroVsDeathBonus : 0;
 
     if (shouldTryWin) {
-      return { card, score: (currentlyWinning ? 2 : 0) + power + zeroVsDeathBonus - reverseRisk };
+      return { card, score: (currentlyWinning ? botParams.winBonus : 0) + power + zeroVsDeathBonus - reverseRisk };
     }
-    return { card, score: (currentlyWinning ? -2 : 0) - power - deathBonus + reverseRisk };
+    return { card, score: (currentlyWinning ? botParams.losePenalty : 0) - power - deathBonus + reverseRisk };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -422,10 +423,10 @@ function chooseBotCard(room, seat, shouldTryWin) {
 }
 
 function cardPower(card) {
-  if (card.type === "death") return 2.5;
-  if (card.type === "zero") return 0.25;
-  if (REVERSE_VALUES.has(card.value)) return 0.85;
-  return card.value / 39;
+  if (card.type === "death") return botParams.deathPower;
+  if (card.type === "zero") return botParams.zeroPower;
+  if (REVERSE_VALUES.has(card.value)) return botParams.reversePower;
+  return card.value / botParams.normalPowerScale;
 }
 
 io.on("connection", (socket) => {
