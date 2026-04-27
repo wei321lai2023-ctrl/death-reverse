@@ -327,6 +327,33 @@ io.on("connection", (socket) => {
     emitRoom(room);
   });
 
+  socket.on("leaveRoom", ({ code } = {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room) return;
+    const playerIndex = room.players.findIndex((entry) => entry?.socketId === socket.id);
+    if (playerIndex === -1) return;
+    const leavingPlayer = room.players[playerIndex];
+
+    socket.leave(room.code);
+    if (room.phase === "lobby") {
+      room.players[playerIndex] = null;
+      if (room.players.every((player) => !player)) {
+        rooms.delete(room.code);
+        return;
+      }
+      if (room.ownerPlayerId === leavingPlayer.playerId) {
+        const nextOwner = room.players.find(Boolean);
+        room.ownerPlayerId = nextOwner?.playerId ?? null;
+      }
+    } else {
+      room.players[playerIndex].connected = false;
+      room.players[playerIndex].socketId = null;
+    }
+
+    socket.emit("leftRoom");
+    emitRoom(room);
+  });
+
   socket.on("submitPrediction", ({ code, value, hidden } = {}) => {
     const room = rooms.get(String(code || "").toUpperCase());
     if (!room || room.phase !== "prediction") return;

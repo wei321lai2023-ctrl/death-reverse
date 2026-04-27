@@ -35,6 +35,12 @@ function App() {
       setError("");
       localStorage.setItem("deathReverseRoom", nextState.code);
     });
+    nextSocket.on("leftRoom", () => {
+      localStorage.removeItem("deathReverseRoom");
+      setState(null);
+      setRoomCode("");
+      setError("");
+    });
     nextSocket.on("gameError", setError);
 
     const savedRoom = localStorage.getItem("deathReverseRoom");
@@ -59,6 +65,13 @@ function App() {
     socket.emit("joinRoom", { code: roomCode, name, playerId });
   }
 
+  function leaveRoom() {
+    if (state?.code) socket.emit("leaveRoom", { code: state.code });
+    localStorage.removeItem("deathReverseRoom");
+    setState(null);
+    setRoomCode("");
+  }
+
   if (!state) {
     return (
       <Shell error={error}>
@@ -69,8 +82,8 @@ function App() {
 
   return (
     <Shell error={error}>
-      {state.phase === "lobby" && <Lobby state={state} socket={socket} />}
-      {["prediction", "trick", "roundEnd"].includes(state.phase) && <Game state={state} socket={socket} />}
+      {state.phase === "lobby" && <Lobby state={state} socket={socket} onLeave={leaveRoom} />}
+      {["prediction", "trick", "roundEnd"].includes(state.phase) && <Game state={state} socket={socket} onLeave={leaveRoom} />}
       {state.phase === "gameOver" && <FinalResults state={state} />}
     </Shell>
   );
@@ -117,13 +130,13 @@ function Home({ name, setName, roomCode, setRoomCode, onCreate, onJoin }) {
   );
 }
 
-function Lobby({ state, socket }) {
+function Lobby({ state, socket, onLeave }) {
   const me = state.players[state.mySeat];
   const ready = Boolean(me?.ready);
   return (
     <section className="grid gap-4 lg:grid-cols-[1fr_280px]">
       <div>
-        <RoomCode code={state.code} />
+        <RoomCode code={state.code} onLeave={onLeave} />
         <SeatGrid players={state.players} scores={state.scores} mySeat={state.mySeat} />
       </div>
       <aside className="rounded border border-stone-300 bg-white p-4">
@@ -137,7 +150,7 @@ function Lobby({ state, socket }) {
   );
 }
 
-function RoomCode({ code }) {
+function RoomCode({ code, onLeave }) {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3 rounded border border-stone-300 bg-white p-3">
       <span className="text-sm text-stone-600">Room</span>
@@ -145,14 +158,20 @@ function RoomCode({ code }) {
       <button className="icon-btn" title="Copy room code" onClick={() => navigator.clipboard.writeText(code)}>
         <Copy size={17} />
       </button>
+      {onLeave && (
+        <button className="secondary-btn ml-auto" onClick={onLeave}>
+          Leave room
+        </button>
+      )}
     </div>
   );
 }
 
-function Game({ state, socket }) {
+function Game({ state, socket, onLeave }) {
   return (
     <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
       <div className="space-y-4">
+        <RoomCode code={state.code} onLeave={onLeave} />
         <StatusBar state={state} />
         {state.phase === "prediction" ? <PredictionPanel state={state} socket={socket} /> : <Table state={state} socket={socket} />}
         {state.phase === "roundEnd" && <RoundSummary state={state} />}
