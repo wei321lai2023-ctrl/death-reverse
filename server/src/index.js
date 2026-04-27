@@ -8,6 +8,7 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || true;
 const PLAYER_COUNT = 5;
 const FINAL_ROUND = 9;
 const REVERSE_VALUES = new Set([11, 22, 33]);
+const BOT_NAMES = ["Bot Ada", "Bot Ben", "Bot Cora", "Bot Dex", "Bot Eve"];
 
 const app = express();
 app.use(cors({ origin: CLIENT_ORIGIN }));
@@ -77,7 +78,9 @@ function makeRoom(owner) {
     played: [],
     roundSummary: null,
     finalResults: null,
-    nextRoundTimer: null
+    nextRoundTimer: null,
+    botTimer: null,
+    botCounter: 0
   };
   room.players[0] = { ...owner, seat: 0, ready: false, connected: true };
   rooms.set(code, room);
@@ -93,7 +96,8 @@ function publicPlayers(room) {
       name: player.name,
       ready: player.ready,
       connected: player.connected,
-      hiddenUsed: Boolean(player.hiddenUsed)
+      hiddenUsed: Boolean(player.hiddenUsed),
+      isBot: Boolean(player.isBot)
     };
   });
 }
@@ -118,6 +122,7 @@ function stateFor(room, socketId) {
   return {
     code: room.code,
     phase: room.phase,
+    isOwner: viewer?.playerId === room.ownerPlayerId,
     round: room.round,
     trickNumber: room.trickNumber,
     leaderSeat: room.leaderSeat,
@@ -143,6 +148,11 @@ function emitRoom(room) {
   }
 }
 
+function emitAndSchedule(room) {
+  emitRoom(room);
+  scheduleBotWork(room);
+}
+
 function emitError(socket, message) {
   socket.emit("gameError", message);
 }
@@ -163,10 +173,12 @@ function addOrReconnectPlayer(socket, room, payload) {
 
   if (room.phase !== "lobby") return { error: "Game already started." };
   const seat = room.players.findIndex((player) => !player);
-  if (seat === -1) return { error: "Room is full." };
+  const botSeat = room.players.findIndex((player) => player?.isBot);
+  const targetSeat = seat === -1 ? botSeat : seat;
+  if (targetSeat === -1) return { error: "Room is full." };
 
-  const player = { playerId, socketId: socket.id, name, seat, ready: false, connected: true, hiddenUsed: false };
-  room.players[seat] = player;
+  const player = { playerId, socketId: socket.id, name, seat: targetSeat, ready: false, connected: true, hiddenUsed: false, isBot: false };
+  room.players[targetSeat] = player;
   socket.join(room.code);
   return { player };
 }
@@ -195,7 +207,7 @@ function startRound(room, round) {
   for (let seat = 0; seat < PLAYER_COUNT; seat += 1) {
     room.hands[seat] = deck.slice(seat * round, seat * round + round).sort(sortCards);
   }
-  emitRoom(room);
+  emitAndSchedule(room);
 }
 
 function sortCards(a, b) {
@@ -210,7 +222,7 @@ function maybeStartTricks(room) {
   room.phase = "trick";
   room.currentTurnSeat = room.leaderSeat;
   room.played = [];
-  emitRoom(room);
+  emitAndSchedule(room);
 }
 
 function determineTrickWinner(played) {
@@ -250,7 +262,7 @@ function finishTrick(room) {
   room.trickNumber += 1;
   room.played = [];
   room.currentTurnSeat = winnerSeat;
-  emitRoom(room);
+  emitAndSchedule(room);
 }
 
 function finishRound(room) {
@@ -293,6 +305,129 @@ function finishRound(room) {
   room.nextRoundTimer = setTimeout(() => startRound(room, room.round + 1), 6500);
 }
 
+function addBot(room) {
+  if (room.phase !== "lobby") return { error: "Bots can only be added in the lobby." };
+  const seat = room.players.findIndex((player) => !player);
+  if (seat === -1) return { error: "Room is full." };
+  room.botCounter += 1;
+  const name = BOT_NAMES[(room.botCounter - 1) % BOT_NAMES.length];
+  room.players[seat] = {
+    playerId: `bot-${room.code}-${room.botCounter}`,
+    socketId: null,
+    name,
+    seat,
+    ready: true,
+    connected: true,
+    hiddenUsed: false,
+    isBot: true
+  };
+  return { bot: room.players[seat] };
+}
+
+function removeBot(room, seat) {
+  if (room.phase !== "lobby") return { error: "Bots can only be removed in the lobby." };
+  const player = room.players[seat];
+  if (!player?.isBot) return { error: "No bot in that seat." };
+  room.players[seat] = null;
+  return { ok: true };
+}
+
+function scheduleBotWork(room, delay = 550) {
+  clearTimeout(room.botTimer);
+  if (!["prediction", "trick"].includes(room.phase)) return;
+  room.botTimer = setTimeout(() => runBotWork(room), delay);
+}
+
+function runBotWork(room) {
+  if (room.phase === "prediction") {
+    let changed = false;
+    for (const player of room.players) {
+      if (!player?.isBot || room.predictions[player.seat]) continue;
+      room.predictions[player.seat] = { value: predictForBot(room, player.seat), hidden: false };
+      changed = true;
+    }
+    if (changed) maybeStartTricks(room);
+    else scheduleBotWork(room, 800);
+    if (changed && room.phase === "prediction") emitAndSchedule(room);
+    return;
+  }
+
+  if (room.phase !== "trick") return;
+  const player = room.players[room.currentTurnSeat];
+  if (!player?.isBot) return;
+  playBotCard(room, player.seat);
+}
+
+function predictForBot(room, seat) {
+  const hand = room.hands[seat] || [];
+  let strength = 0;
+  for (const card of hand) {
+    if (card.type === "death") strength += 1.15;
+    else if (card.type === "zero") strength += room.round >= 4 ? 0.35 : 0.2;
+    else if (REVERSE_VALUES.has(card.value)) strength += 0.38;
+    else if (card.value >= 35) strength += 0.85;
+    else if (card.value >= 29) strength += 0.6;
+    else if (card.value >= 22) strength += 0.35;
+    else if (card.value <= 4) strength += 0.15;
+  }
+  const conservative = room.round <= 3 ? 0.82 : 0.72;
+  return Math.max(0, Math.min(room.round, Math.round(strength * conservative)));
+}
+
+function playBotCard(room, seat) {
+  const hand = room.hands[seat] || [];
+  if (!hand.length || room.currentTurnSeat !== seat) return;
+
+  const prediction = room.predictions[seat]?.value ?? 0;
+  const won = room.actualWins[seat] || 0;
+  const remainingAfterThis = Math.max(0, room.round - room.trickNumber);
+  const needWins = prediction - won;
+  const shouldTryWin = needWins > 0 && (needWins >= remainingAfterThis || Math.random() < 0.72);
+  const card = chooseBotCard(room, seat, shouldTryWin);
+  const cardIndex = hand.findIndex((entry) => entry.id === card.id);
+  const [playedCard] = hand.splice(cardIndex, 1);
+  room.played.push({ seat, card: playedCard, order: room.played.length });
+
+  if (room.played.length === PLAYER_COUNT) {
+    room.currentTurnSeat = null;
+    emitRoom(room);
+    setTimeout(() => finishTrick(room), 1200);
+    return;
+  }
+
+  let next = nextSeat(seat);
+  while (room.played.some((entry) => entry.seat === next)) next = nextSeat(next);
+  room.currentTurnSeat = next;
+  emitAndSchedule(room);
+}
+
+function chooseBotCard(room, seat, shouldTryWin) {
+  const hand = room.hands[seat] || [];
+  const scored = hand.map((card) => {
+    const projected = [...room.played, { seat, card, order: room.played.length }];
+    const currentlyWinning = determineTrickWinner(projected) === seat;
+    const power = cardPower(card);
+    const reverseRisk = card.type === "number" && REVERSE_VALUES.has(card.value) ? 0.18 : 0;
+    const deathBonus = card.type === "death" ? 0.3 : 0;
+    const zeroVsDeathBonus = card.type === "zero" && room.played.some((entry) => entry.card.type === "death") ? 1.2 : 0;
+
+    if (shouldTryWin) {
+      return { card, score: (currentlyWinning ? 2 : 0) + power + zeroVsDeathBonus - reverseRisk };
+    }
+    return { card, score: (currentlyWinning ? -2 : 0) - power - deathBonus + reverseRisk };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].card;
+}
+
+function cardPower(card) {
+  if (card.type === "death") return 2.5;
+  if (card.type === "zero") return 0.25;
+  if (REVERSE_VALUES.has(card.value)) return 0.85;
+  return card.value / 39;
+}
+
 io.on("connection", (socket) => {
   socket.on("createRoom", (payload = {}) => {
     const playerId = String(payload.playerId || "").trim();
@@ -327,6 +462,27 @@ io.on("connection", (socket) => {
     emitRoom(room);
   });
 
+  socket.on("addBot", ({ code } = {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room || room.phase !== "lobby") return;
+    const player = room.players.find((entry) => entry?.socketId === socket.id);
+    if (!player || player.playerId !== room.ownerPlayerId) return emitError(socket, "Only the room owner can add bots.");
+    const result = addBot(room);
+    if (result.error) return emitError(socket, result.error);
+    maybeStartGame(room);
+    emitRoom(room);
+  });
+
+  socket.on("removeBot", ({ code, seat } = {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room || room.phase !== "lobby") return;
+    const player = room.players.find((entry) => entry?.socketId === socket.id);
+    if (!player || player.playerId !== room.ownerPlayerId) return emitError(socket, "Only the room owner can remove bots.");
+    const result = removeBot(room, Number(seat));
+    if (result.error) return emitError(socket, result.error);
+    emitRoom(room);
+  });
+
   socket.on("leaveRoom", ({ code } = {}) => {
     const room = rooms.get(String(code || "").toUpperCase());
     if (!room) return;
@@ -337,12 +493,13 @@ io.on("connection", (socket) => {
     socket.leave(room.code);
     if (room.phase === "lobby") {
       room.players[playerIndex] = null;
-      if (room.players.every((player) => !player)) {
+      const humanPlayers = room.players.filter((player) => player && !player.isBot);
+      if (humanPlayers.length === 0) {
         rooms.delete(room.code);
         return;
       }
       if (room.ownerPlayerId === leavingPlayer.playerId) {
-        const nextOwner = room.players.find(Boolean);
+        const nextOwner = humanPlayers[0];
         room.ownerPlayerId = nextOwner?.playerId ?? null;
       }
     } else {
@@ -395,7 +552,7 @@ io.on("connection", (socket) => {
     let next = nextSeat(player.seat);
     while (room.played.some((entry) => entry.seat === next)) next = nextSeat(next);
     room.currentTurnSeat = next;
-    emitRoom(room);
+    emitAndSchedule(room);
   });
 
   socket.on("disconnect", () => {

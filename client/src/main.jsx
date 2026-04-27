@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { io } from "socket.io-client";
-import { Copy, Crown, EyeOff, Play, RotateCcw, Skull, Users } from "lucide-react";
+import { Bot, Copy, Crown, EyeOff, Play, RotateCcw, Skull, UserMinus, Users } from "lucide-react";
 import "./styles.css";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || `${window.location.protocol}//${window.location.hostname}:3001`;
@@ -133,15 +133,21 @@ function Home({ name, setName, roomCode, setRoomCode, onCreate, onJoin }) {
 function Lobby({ state, socket, onLeave }) {
   const me = state.players[state.mySeat];
   const ready = Boolean(me?.ready);
+  const emptySeats = state.players.filter((player) => player.empty).length;
   return (
     <section className="grid gap-4 lg:grid-cols-[1fr_280px]">
       <div>
         <RoomCode code={state.code} onLeave={onLeave} />
-        <SeatGrid players={state.players} scores={state.scores} mySeat={state.mySeat} />
+        <SeatGrid players={state.players} scores={state.scores} mySeat={state.mySeat} isOwner={state.isOwner} onRemoveBot={(seat) => socket.emit("removeBot", { code: state.code, seat })} />
       </div>
       <aside className="rounded border border-stone-300 bg-white p-4">
         <h2 className="mb-3 text-lg font-semibold">Lobby</h2>
         <p className="mb-4 text-sm text-stone-600">Game starts automatically when all 5 seats are filled and ready.</p>
+        {state.isOwner && emptySeats > 0 && (
+          <button className="secondary-btn mb-3 w-full" onClick={() => socket.emit("addBot", { code: state.code })}>
+            <Bot size={18} /> Add bot
+          </button>
+        )}
         <button className={ready ? "secondary-btn w-full" : "primary-btn w-full"} onClick={() => socket.emit("setReady", { code: state.code, ready: !ready })}>
           <Play size={18} /> {ready ? "Not ready" : "Ready"}
         </button>
@@ -402,7 +408,7 @@ function RoundSummary({ state }) {
   );
 }
 
-function SeatGrid({ players, scores, mySeat }) {
+function SeatGrid({ players, scores, mySeat, isOwner, onRemoveBot }) {
   return (
     <div className="grid gap-3 sm:grid-cols-5">
       {players.map((player, seat) => (
@@ -412,10 +418,18 @@ function SeatGrid({ players, scores, mySeat }) {
             <div className="text-stone-400">Empty</div>
           ) : (
             <>
-              <div className="truncate font-semibold">{player.name}</div>
+              <div className="flex items-center gap-2">
+                {player.isBot && <Bot size={15} className="shrink-0 text-sky-700" />}
+                <div className="truncate font-semibold">{player.name}</div>
+              </div>
               <div className="mt-1 text-sm text-stone-600">{player.connected ? "Online" : "Disconnected"}</div>
               <div className="mt-1 text-sm text-stone-600">{player.ready ? "Ready" : "Not ready"}</div>
               <div className="mt-1 text-sm font-semibold">{scores?.[seat] || 0} pts</div>
+              {isOwner && player.isBot && (
+                <button className="mt-3 inline-flex items-center gap-1 rounded border border-stone-300 px-2 py-1 text-xs font-semibold text-stone-700 hover:bg-stone-100" onClick={() => onRemoveBot(seat)}>
+                  <UserMinus size={13} /> Remove
+                </button>
+              )}
             </>
           )}
         </div>
