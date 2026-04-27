@@ -77,9 +77,11 @@ function makeRoom(owner) {
     actualWins: {},
     scores: {},
     played: [],
+    lastTrick: null,
+    trickHistory: [],
+    continueVotes: {},
     roundSummary: null,
     finalResults: null,
-    nextRoundTimer: null,
     botTimer: null,
     botCounter: 0
   };
@@ -107,7 +109,7 @@ function visiblePredictions(room, viewerSeat) {
   const result = {};
   for (const [seat, prediction] of Object.entries(room.predictions)) {
     const numericSeat = Number(seat);
-    const canReveal = room.phase === "roundEnd" || room.phase === "gameOver" || numericSeat === viewerSeat || !prediction.hidden;
+    const canReveal = room.phase === "roundEnd" || room.phase === "gameOver" || room.phase === "trickResult" || numericSeat === viewerSeat || !prediction.hidden;
     result[seat] = {
       submitted: true,
       hidden: prediction.hidden && !canReveal,
@@ -136,6 +138,9 @@ function stateFor(room, socketId) {
     actualWins: room.actualWins,
     scores: room.scores,
     played: room.played,
+    lastTrick: room.lastTrick,
+    trickHistory: room.trickHistory,
+    continueVotes: room.continueVotes,
     roundSummary: room.roundSummary,
     finalResults: room.finalResults
   };
@@ -192,7 +197,6 @@ function maybeStartGame(room) {
 }
 
 function startRound(room, round) {
-  clearTimeout(room.nextRoundTimer);
   const deck = shuffle(makeDeck());
   room.phase = "prediction";
   room.round = round;
@@ -201,6 +205,9 @@ function startRound(room, round) {
   room.actualWins = Object.fromEntries(room.players.map((_player, seat) => [seat, 0]));
   room.hands = {};
   room.played = [];
+  room.lastTrick = null;
+  room.trickHistory = [];
+  room.continueVotes = {};
   room.roundSummary = null;
   room.leaderSeat = Math.floor(Math.random() * PLAYER_COUNT);
   room.currentTurnSeat = null;
@@ -254,7 +261,21 @@ function finishTrick(room) {
   const winnerSeat = determineTrickWinner(room.played);
   room.actualWins[winnerSeat] += 1;
   room.leaderSeat = winnerSeat;
+  room.lastTrick = {
+    round: room.round,
+    trickNumber: room.trickNumber,
+    winnerSeat,
+    played: room.played.map((entry) => ({ ...entry }))
+  };
+  room.trickHistory.push(room.lastTrick);
+  room.phase = "trickResult";
+  room.currentTurnSeat = null;
+  room.continueVotes = Object.fromEntries(room.players.map((player, seat) => [seat, Boolean(player?.isBot)]));
+  emitRoom(room);
+}
 
+function continueAfterTrick(room) {
+  if (room.phase !== "trickResult") return;
   if (room.trickNumber >= room.round) {
     finishRound(room);
     return;
@@ -262,8 +283,37 @@ function finishTrick(room) {
 
   room.trickNumber += 1;
   room.played = [];
-  room.currentTurnSeat = winnerSeat;
+  room.currentTurnSeat = room.leaderSeat;
+  room.phase = "trick";
+  room.continueVotes = {};
   emitAndSchedule(room);
+}
+
+function eligibleContinueSeats(room) {
+  return room.players.filter((player) => player && !player.isBot && player.connected).map((player) => player.seat);
+}
+
+function allHumansContinued(room) {
+  const seats = eligibleContinueSeats(room);
+  return seats.length === 0 || seats.every((seat) => room.continueVotes[seat]);
+}
+
+function markContinue(room, seat) {
+  if (!["trickResult", "roundEnd"].includes(room.phase)) return;
+  room.continueVotes[seat] = true;
+  if (!allHumansContinued(room)) {
+    emitRoom(room);
+    return;
+  }
+
+  if (room.phase === "trickResult") {
+    continueAfterTrick(room);
+    return;
+  }
+
+  if (room.phase === "roundEnd") {
+    startRound(room, room.round + 1);
+  }
 }
 
 function finishRound(room) {
@@ -302,8 +352,8 @@ function finishRound(room) {
   room.phase = "roundEnd";
   room.currentTurnSeat = null;
   room.played = [];
+  room.continueVotes = Object.fromEntries(room.players.map((player, seat) => [seat, Boolean(player?.isBot)]));
   emitRoom(room);
-  room.nextRoundTimer = setTimeout(() => startRound(room, room.round + 1), 6500);
 }
 
 function addBot(room) {
@@ -391,8 +441,7 @@ function playBotCard(room, seat) {
 
   if (room.played.length === PLAYER_COUNT) {
     room.currentTurnSeat = null;
-    emitRoom(room);
-    setTimeout(() => finishTrick(room), 1200);
+    finishTrick(room);
     return;
   }
 
@@ -545,8 +594,7 @@ io.on("connection", (socket) => {
 
     if (room.played.length === PLAYER_COUNT) {
       room.currentTurnSeat = null;
-      emitRoom(room);
-      setTimeout(() => finishTrick(room), 1200);
+      finishTrick(room);
       return;
     }
 
@@ -554,6 +602,14 @@ io.on("connection", (socket) => {
     while (room.played.some((entry) => entry.seat === next)) next = nextSeat(next);
     room.currentTurnSeat = next;
     emitAndSchedule(room);
+  });
+
+  socket.on("continueGame", ({ code } = {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room || !["trickResult", "roundEnd"].includes(room.phase)) return;
+    const player = room.players.find((entry) => entry?.socketId === socket.id);
+    if (!player) return;
+    markContinue(room, player.seat);
   });
 
   socket.on("disconnect", () => {

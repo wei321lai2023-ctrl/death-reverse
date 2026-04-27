@@ -31,8 +31,11 @@ Each round follows this order:
 5. Players play R tricks.
 6. The first trick leader is random.
 7. Later trick leaders are the winners of the previous trick.
-8. After all tricks in the round are finished, scores are calculated.
-9. After round 9, the player with the highest total score wins.
+8. After each trick, the played cards and trick winner are shown.
+9. All human players click continue before the next trick starts.
+10. After all tricks in the round are finished, scores are calculated.
+11. All human players click continue before the next round is dealt.
+12. After round 9, the player with the highest total score wins.
 
 ## Prediction Rules
 

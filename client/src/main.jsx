@@ -83,7 +83,7 @@ function App() {
   return (
     <Shell error={error}>
       {state.phase === "lobby" && <Lobby state={state} socket={socket} onLeave={leaveRoom} />}
-      {["prediction", "trick", "roundEnd"].includes(state.phase) && <Game state={state} socket={socket} onLeave={leaveRoom} />}
+      {["prediction", "trick", "trickResult", "roundEnd"].includes(state.phase) && <Game state={state} socket={socket} onLeave={leaveRoom} />}
       {state.phase === "gameOver" && <FinalResults state={state} />}
     </Shell>
   );
@@ -179,13 +179,17 @@ function Game({ state, socket, onLeave }) {
       <div className="space-y-4">
         <RoomCode code={state.code} onLeave={onLeave} />
         <StatusBar state={state} />
-        {state.phase === "prediction" ? <PredictionPanel state={state} socket={socket} /> : <Table state={state} socket={socket} />}
+        {state.phase === "prediction" && <PredictionPanel state={state} socket={socket} />}
+        {["trick", "trickResult"].includes(state.phase) && <Table state={state} />}
+        {state.phase === "trickResult" && <TrickResult state={state} socket={socket} />}
         {state.phase === "roundEnd" && <RoundSummary state={state} />}
+        {state.phase === "roundEnd" && <ContinuePanel state={state} socket={socket} label="Start next round" />}
         <Hand state={state} socket={socket} />
       </div>
       <aside className="space-y-4">
         <Scoreboard state={state} />
         <PredictionList state={state} />
+        <TrickHistory state={state} />
       </aside>
     </section>
   );
@@ -194,10 +198,12 @@ function Game({ state, socket, onLeave }) {
 function StatusBar({ state }) {
   const current = state.players[state.currentTurnSeat]?.name || "-";
   const leader = state.players[state.leaderSeat]?.name || "-";
+  const phaseLabel = state.phase === "trickResult" ? "Review" : state.phase === "roundEnd" ? "Round result" : state.phase;
   return (
-    <div className="grid gap-2 rounded border border-stone-300 bg-white p-3 sm:grid-cols-4">
+    <div className="grid gap-2 rounded border border-stone-300 bg-white p-3 sm:grid-cols-5">
       <Metric label="Round" value={`${state.round} / 9`} />
       <Metric label="Trick" value={`${state.trickNumber || 1} / ${state.round || 1}`} />
+      <Metric label="State" value={phaseLabel} />
       <Metric label="Turn" value={current} />
       <Metric label="Leader" value={leader} />
     </div>
@@ -253,16 +259,26 @@ function PredictionPanel({ state, socket }) {
 }
 
 function Table({ state }) {
-  const order = state.leaderSeat === null ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4].sort((a, b) => relativeSeat(a, state.leaderSeat) - relativeSeat(b, state.leaderSeat));
+  const resultMode = state.phase === "trickResult" && state.lastTrick;
+  const played = resultMode ? state.lastTrick.played : state.played;
+  const order = resultMode
+    ? played.map((entry) => entry.seat)
+    : state.leaderSeat === null
+      ? [0, 1, 2, 3, 4]
+      : [0, 1, 2, 3, 4].sort((a, b) => relativeSeat(a, state.leaderSeat) - relativeSeat(b, state.leaderSeat));
   return (
     <div className="rounded border border-stone-300 bg-white p-4">
-      <h2 className="mb-3 text-lg font-semibold">Table</h2>
+      <h2 className="mb-3 text-lg font-semibold">{resultMode ? `Trick ${state.lastTrick.trickNumber} result` : "Table"}</h2>
       <div className="grid min-h-48 gap-3 sm:grid-cols-5">
         {order.map((seat) => {
-          const play = state.played.find((entry) => entry.seat === seat);
+          const play = played.find((entry) => entry.seat === seat);
+          const won = resultMode && state.lastTrick.winnerSeat === seat;
           return (
-            <div key={seat} className={`rounded border p-3 ${state.currentTurnSeat === seat ? "border-stone-900 bg-amber-50" : "border-stone-200"}`}>
-              <div className="mb-2 truncate text-sm font-medium">{state.players[seat]?.name || `Seat ${seat + 1}`}</div>
+            <div key={seat} className={`rounded border p-3 ${won ? "border-green-600 bg-green-50" : state.currentTurnSeat === seat ? "border-stone-900 bg-amber-50" : "border-stone-200"}`}>
+              <div className="mb-2 flex items-center justify-between gap-2 text-sm font-medium">
+                <span className="truncate">{state.players[seat]?.name || `Seat ${seat + 1}`}</span>
+                {won && <span className="rounded bg-green-700 px-2 py-0.5 text-xs font-bold text-white">Won</span>}
+              </div>
               {play ? <Card card={play.card} /> : <div className="flex h-24 items-center justify-center rounded border border-dashed border-stone-300 text-sm text-stone-400">Waiting</div>}
             </div>
           );
@@ -289,7 +305,60 @@ function Hand({ state, socket }) {
           </button>
         ))}
       </div>
-      {!canPlay && <p className="mt-2 text-sm text-stone-500">{state.phase === "prediction" ? "Use these cards to make your prediction." : "Waiting for your turn."}</p>}
+      {!canPlay && <p className="mt-2 text-sm text-stone-500">{state.phase === "prediction" ? "Use these cards to make your prediction." : state.phase === "trickResult" ? "Review the trick result, then continue." : "Waiting for your turn."}</p>}
+    </div>
+  );
+}
+
+function TrickResult({ state, socket }) {
+  if (!state.lastTrick) return null;
+  const winner = state.players[state.lastTrick.winnerSeat]?.name || `Seat ${state.lastTrick.winnerSeat + 1}`;
+  return (
+    <div className="rounded border border-green-300 bg-green-50 p-4">
+      <h2 className="mb-2 text-lg font-semibold">Winner: {winner}</h2>
+      <p className="mb-3 text-sm text-green-900">Everyone can review the played cards before the next trick starts.</p>
+      <ContinuePanel state={state} socket={socket} label={state.trickNumber >= state.round ? "Show round score" : "Next trick"} />
+    </div>
+  );
+}
+
+function ContinuePanel({ state, socket, label }) {
+  const humanSeats = state.players.filter((player) => !player.empty && !player.isBot && player.connected).map((player) => player.seat);
+  const readyCount = humanSeats.filter((seat) => state.continueVotes?.[seat]).length;
+  const alreadyReady = Boolean(state.continueVotes?.[state.mySeat]);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-stone-300 bg-white p-3">
+      <div className="text-sm text-stone-600">
+        Continue votes: <strong className="text-stone-900">{readyCount}</strong> / {humanSeats.length}
+      </div>
+      <button className={alreadyReady ? "secondary-btn" : "primary-btn"} disabled={alreadyReady} onClick={() => socket.emit("continueGame", { code: state.code })}>
+        <Play size={18} /> {alreadyReady ? "Waiting for others" : label}
+      </button>
+    </div>
+  );
+}
+
+function TrickHistory({ state }) {
+  if (!state.trickHistory?.length) return null;
+  return (
+    <div className="rounded border border-stone-300 bg-white p-4">
+      <h2 className="mb-3 text-lg font-semibold">Trick history</h2>
+      <div className="space-y-3">
+        {state.trickHistory.map((trick) => (
+          <div key={`${trick.round}-${trick.trickNumber}`} className="rounded border border-stone-200 p-2">
+            <div className="mb-2 text-sm font-semibold">
+              Trick {trick.trickNumber}: {state.players[trick.winnerSeat]?.name || `Seat ${trick.winnerSeat + 1}`} won
+            </div>
+            <div className="flex flex-wrap gap-1 text-xs text-stone-700">
+              {trick.played.map((entry) => (
+                <span key={`${trick.trickNumber}-${entry.seat}`} className="rounded bg-stone-100 px-2 py-1">
+                  {state.players[entry.seat]?.name || `S${entry.seat + 1}`}: {entry.card.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
