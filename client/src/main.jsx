@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { io } from "socket.io-client";
-import { Copy, Crown, EyeOff, Play, RotateCcw, Users } from "lucide-react";
+import { Copy, Crown, EyeOff, Play, RotateCcw, Skull, Users } from "lucide-react";
 import "./styles.css";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || `${window.location.protocol}//${window.location.hostname}:3001`;
@@ -289,13 +289,54 @@ function Hand({ state, socket }) {
 
 function Card({ card }) {
   const isReverse = card.type === "number" && [11, 22, 33].includes(card.value);
-  const classes = card.type === "death" ? "border-stone-950 bg-stone-950 text-white" : isReverse ? "border-sky-500 bg-sky-50 text-sky-950" : card.type === "zero" ? "border-amber-500 bg-amber-50 text-amber-950" : "border-stone-300 bg-white";
+  const style = getCardStyle(card, isReverse);
   return (
-    <div className={`flex h-24 min-w-16 flex-col items-center justify-center rounded border px-3 ${classes}`}>
-      <div className="text-xl font-bold">{card.label}</div>
-      {isReverse && <RotateCcw size={16} />}
+    <div className={`relative flex h-24 min-w-16 flex-col items-center justify-center overflow-hidden rounded border px-3 shadow-sm ${style.classes}`}>
+      <div className={`absolute left-2 top-2 text-[10px] font-bold uppercase tracking-wide ${style.badgeClass}`}>{style.badge}</div>
+      <div className={`text-2xl font-black ${style.valueClass}`}>{card.label}</div>
+      {style.icon}
     </div>
   );
+}
+
+function getCardStyle(card, isReverse) {
+  if (card.type === "death") {
+    return {
+      badge: "Death",
+      badgeClass: "text-red-200",
+      valueClass: "tracking-tight",
+      classes: "border-red-900 bg-stone-950 text-white",
+      icon: <Skull className="mt-1 text-red-300" size={18} />
+    };
+  }
+
+  if (card.type === "zero") {
+    return {
+      badge: "Zero",
+      badgeClass: "text-amber-700",
+      valueClass: "text-amber-950",
+      classes: "border-amber-500 bg-amber-100 text-amber-950",
+      icon: <div className="mt-1 h-2 w-8 rounded-full bg-amber-500" />
+    };
+  }
+
+  if (isReverse) {
+    return {
+      badge: "Reverse",
+      badgeClass: "text-sky-700",
+      valueClass: "text-sky-950",
+      classes: "border-sky-500 bg-sky-50 text-sky-950",
+      icon: <RotateCcw className="mt-1 text-sky-700" size={17} />
+    };
+  }
+
+  return {
+    badge: "Card",
+    badgeClass: "text-stone-400",
+    valueClass: "text-stone-950",
+    classes: "border-stone-300 bg-white text-stone-950",
+    icon: null
+  };
 }
 
 function Scoreboard({ state }) {
