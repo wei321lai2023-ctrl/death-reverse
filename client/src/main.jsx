@@ -84,7 +84,7 @@ function App() {
     <Shell error={error}>
       {state.phase === "lobby" && <Lobby state={state} socket={socket} onLeave={leaveRoom} />}
       {["prediction", "trick", "trickResult", "roundEnd"].includes(state.phase) && <Game state={state} socket={socket} onLeave={leaveRoom} />}
-      {state.phase === "gameOver" && <FinalResults state={state} />}
+      {state.phase === "gameOver" && <FinalResults state={state} socket={socket} />}
     </Shell>
   );
 }
@@ -508,7 +508,7 @@ function SeatGrid({ players, scores, mySeat, isOwner, onRemoveBot }) {
   );
 }
 
-function FinalResults({ state }) {
+function FinalResults({ state, socket }) {
   const winner = state.finalResults?.[0];
   return (
     <section className="mx-auto w-full max-w-xl rounded border border-stone-300 bg-white p-5">
@@ -525,6 +525,13 @@ function FinalResults({ state }) {
         ))}
       </div>
       {winner && <p className="mt-4 text-sm text-stone-600">{winner.name} wins.</p>}
+      {state.isOwner ? (
+        <button className="primary-btn mt-4 w-full" onClick={() => socket.emit("playAgain", { code: state.code })}>
+          <Play size={18} /> Play again
+        </button>
+      ) : (
+        <p className="mt-4 rounded border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">Waiting for the room owner to start another game.</p>
+      )}
     </section>
   );
 }

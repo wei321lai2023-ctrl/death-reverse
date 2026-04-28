@@ -316,6 +316,31 @@ function markContinue(room, seat) {
   }
 }
 
+function resetRoomForRematch(room) {
+  clearTimeout(room.botTimer);
+  room.phase = "lobby";
+  room.round = 0;
+  room.trickNumber = 0;
+  room.leaderSeat = null;
+  room.currentTurnSeat = null;
+  room.hands = {};
+  room.predictions = {};
+  room.actualWins = {};
+  room.scores = {};
+  room.played = [];
+  room.lastTrick = null;
+  room.trickHistory = [];
+  room.continueVotes = {};
+  room.roundSummary = null;
+  room.finalResults = null;
+
+  for (const player of room.players) {
+    if (!player) continue;
+    player.ready = Boolean(player.isBot);
+    player.hiddenUsed = false;
+  }
+}
+
 function finishRound(room) {
   const scoreChanges = {};
   const revealedPredictions = {};
@@ -610,6 +635,15 @@ io.on("connection", (socket) => {
     const player = room.players.find((entry) => entry?.socketId === socket.id);
     if (!player) return;
     markContinue(room, player.seat);
+  });
+
+  socket.on("playAgain", ({ code } = {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room || room.phase !== "gameOver") return;
+    const player = room.players.find((entry) => entry?.socketId === socket.id);
+    if (!player || player.playerId !== room.ownerPlayerId) return emitError(socket, "Only the room owner can start a new game.");
+    resetRoomForRematch(room);
+    emitRoom(room);
   });
 
   socket.on("disconnect", () => {
