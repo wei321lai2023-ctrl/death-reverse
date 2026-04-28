@@ -62,6 +62,42 @@ const scenarios = [
     ],
     hand: [number(2), number(35), zero(1)],
     note: "Low mode means smaller normal cards are dangerous."
+  },
+  {
+    name: "Pressure leader into over-winning",
+    seat: 4,
+    round: 8,
+    trickNumber: 6,
+    prediction: 2,
+    actualWins: 2,
+    predictions: [1, 2, 3, 1, 2],
+    actualWinsBySeat: [1, 2, 3, 1, 2],
+    scores: [4, 18, 6, 2, 5],
+    played: [
+      play(1, number(31)),
+      play(2, number(14)),
+      play(3, number(9))
+    ],
+    hand: [number(2), death()],
+    note: "Seat 2 is leading and already hit prediction. Letting them win one more can make them miss."
+  },
+  {
+    name: "Avoid helping leader reach prediction",
+    seat: 4,
+    round: 8,
+    trickNumber: 5,
+    prediction: 2,
+    actualWins: 2,
+    predictions: [1, 2, 3, 1, 2],
+    actualWinsBySeat: [1, 1, 3, 1, 2],
+    scores: [4, 18, 6, 2, 5],
+    played: [
+      play(1, number(31)),
+      play(2, number(14)),
+      play(3, number(9))
+    ],
+    hand: [number(2), death()],
+    note: "Seat 2 is leading but still needs one. Helping them win is bad."
   }
 ];
 
@@ -89,14 +125,16 @@ function analyzeScenario(scenario) {
     const reverseRisk = card.type === "number" && REVERSE_VALUES.has(card.value) ? botParams.reverseRisk : 0;
     const deathBonus = card.type === "death" ? botParams.deathAvoidPenalty : 0;
     const zeroVsDeathBonus = card.type === "zero" && scenario.played.some((entry) => entry.card.type === "death") ? botParams.zeroVsDeathBonus : 0;
+    const opponentImpact = scoreOpponentImpact(scenario, winningSeat);
     const score = shouldTryWin
       ? currentlyWinning ? botParams.winBonus + power + zeroVsDeathBonus - reverseRisk : -botParams.missGoalPenalty - power
-      : (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk;
+      : (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk + opponentImpact;
     return {
       card: card.label,
       winsNow: currentlyWinning,
       winnerIfPlayed: `S${winningSeat + 1}`,
       power: round(power),
+      opponentImpact: round(opponentImpact),
       score: round(score)
     };
   });
@@ -108,6 +146,25 @@ function analyzeScenario(scenario) {
     options,
     chosen: options[0]
   };
+}
+
+function scoreOpponentImpact(scenario, winnerSeat) {
+  if (winnerSeat === scenario.seat || !scenario.predictions) return 0;
+  const beforeWins = scenario.actualWinsBySeat?.[winnerSeat] || 0;
+  const afterWins = beforeWins + 1;
+  const prediction = scenario.predictions[winnerSeat];
+  const beforeDistance = Math.abs(prediction - beforeWins);
+  const afterDistance = Math.abs(prediction - afterWins);
+  const scoreLead = Math.max(0, (scenario.scores?.[winnerSeat] || 0) - (scenario.scores?.[scenario.seat] || 0));
+  const leadWeight = 1 + scoreLead / 20;
+  let impact = 0;
+
+  if (afterDistance > beforeDistance) impact += botParams.opponentFailPressure * leadWeight;
+  else if (afterDistance < beforeDistance) impact -= botParams.opponentFailPressure * leadWeight;
+
+  if (scoreLead > 0 && afterDistance > beforeDistance) impact += botParams.leaderSabotage * leadWeight;
+  if ((scenario.scores?.[scenario.seat] || 0) < (scenario.scores?.[winnerSeat] || 0)) impact += botParams.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
+  return impact;
 }
 
 function determineTrickWinner(played) {

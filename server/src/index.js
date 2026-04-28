@@ -490,20 +490,52 @@ function chooseBotCard(room, seat, shouldTryWin) {
   const hand = room.hands[seat] || [];
   const scored = hand.map((card) => {
     const projected = [...room.played, { seat, card, order: room.played.length }];
-    const currentlyWinning = determineTrickWinner(projected) === seat;
+    const winnerIfPlayed = determineTrickWinner(projected);
+    const currentlyWinning = winnerIfPlayed === seat;
     const power = cardPower(card);
     const reverseRisk = card.type === "number" && REVERSE_VALUES.has(card.value) ? botParams.reverseRisk : 0;
     const deathBonus = card.type === "death" ? botParams.deathAvoidPenalty : 0;
     const zeroVsDeathBonus = card.type === "zero" && room.played.some((entry) => entry.card.type === "death") ? botParams.zeroVsDeathBonus : 0;
+    const opponentImpact = scoreOpponentImpact(room, seat, winnerIfPlayed);
 
     if (shouldTryWin) {
-      return { card, score: currentlyWinning ? botParams.winBonus + power + zeroVsDeathBonus - reverseRisk : -botParams.missGoalPenalty - power };
+      return { card, score: (currentlyWinning ? botParams.winBonus + power + zeroVsDeathBonus - reverseRisk : -botParams.missGoalPenalty - power) + opponentImpact };
     }
-    return { card, score: (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk };
+    return { card, score: (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk + opponentImpact };
   });
 
   scored.sort((a, b) => b.score - a.score);
   return scored[0].card;
+}
+
+function scoreOpponentImpact(room, seat, winnerSeat) {
+  if (winnerSeat === seat || !room.players[winnerSeat]) return 0;
+  const prediction = room.predictions[winnerSeat]?.value;
+  if (prediction === undefined) return 0;
+
+  const beforeWins = room.actualWins[winnerSeat] || 0;
+  const afterWins = beforeWins + 1;
+  const beforeDistance = Math.abs(prediction - beforeWins);
+  const afterDistance = Math.abs(prediction - afterWins);
+  const scoreLead = Math.max(0, (room.scores[winnerSeat] || 0) - (room.scores[seat] || 0));
+  const leadWeight = 1 + scoreLead / 20;
+  let impact = 0;
+
+  if (afterDistance > beforeDistance) {
+    impact += botParams.opponentFailPressure * leadWeight;
+  } else if (afterDistance < beforeDistance) {
+    impact -= botParams.opponentFailPressure * leadWeight;
+  }
+
+  if (scoreLead > 0 && afterDistance > beforeDistance) {
+    impact += botParams.leaderSabotage * leadWeight;
+  }
+
+  if ((room.scores[seat] || 0) < (room.scores[winnerSeat] || 0)) {
+    impact += botParams.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
+  }
+
+  return impact;
 }
 
 function cardPower(card) {

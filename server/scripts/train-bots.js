@@ -89,6 +89,9 @@ function playGame(paramsBySeat, random) {
           trickNumber,
           prediction: predictions[seat],
           actualWins: actualWins[seat],
+          predictions,
+          actualWinsBySeat: actualWins,
+          scores,
           params: paramsBySeat[seat],
           random
         });
@@ -153,26 +156,46 @@ function predict(hand, round, params) {
   return clamp(Math.round(strength * conservative), 0, round);
 }
 
-function chooseCard({ hand, played, seat, round, trickNumber, prediction, actualWins, params, random }) {
+function chooseCard({ hand, played, seat, round, trickNumber, prediction, actualWins, predictions = [], actualWinsBySeat = [], scores = [], params, random }) {
   const remainingAfterThis = Math.max(0, round - trickNumber);
   const needWins = prediction - actualWins;
   const shouldTryWin = needWins > 0 && (needWins >= remainingAfterThis || random() < params.tryWinChance);
   const scored = hand.map((card) => {
     const projected = [...played, { seat, card, order: played.length }];
-    const currentlyWinning = determineTrickWinner(projected) === seat;
+    const winnerIfPlayed = determineTrickWinner(projected);
+    const currentlyWinning = winnerIfPlayed === seat;
     const power = cardPower(card, params);
     const reverseRisk = card.type === "number" && REVERSE_VALUES.has(card.value) ? params.reverseRisk : 0;
     const deathBonus = card.type === "death" ? params.deathAvoidPenalty : 0;
     const zeroVsDeathBonus = card.type === "zero" && played.some((entry) => entry.card.type === "death") ? params.zeroVsDeathBonus : 0;
+    const opponentImpact = scoreOpponentImpact({ seat, winnerSeat: winnerIfPlayed, predictions, actualWinsBySeat, scores, params });
     const jitter = (random() - 0.5) * 0.03;
 
     if (shouldTryWin) {
-      return { card, score: currentlyWinning ? params.winBonus + power + zeroVsDeathBonus - reverseRisk + jitter : -params.missGoalPenalty - power + jitter };
+      return { card, score: (currentlyWinning ? params.winBonus + power + zeroVsDeathBonus - reverseRisk : -params.missGoalPenalty - power) + opponentImpact + jitter };
     }
-    return { card, score: (currentlyWinning ? params.losePenalty - params.forcedWinPenalty : 0) - power + power * params.burnPowerWhenSafe - deathBonus + reverseRisk + jitter };
+    return { card, score: (currentlyWinning ? params.losePenalty - params.forcedWinPenalty : 0) - power + power * params.burnPowerWhenSafe - deathBonus + reverseRisk + opponentImpact + jitter };
   });
   scored.sort((a, b) => b.score - a.score);
   return scored[0].card;
+}
+
+function scoreOpponentImpact({ seat, winnerSeat, predictions, actualWinsBySeat, scores, params }) {
+  if (winnerSeat === seat || predictions[winnerSeat] === undefined) return 0;
+  const beforeWins = actualWinsBySeat[winnerSeat] || 0;
+  const afterWins = beforeWins + 1;
+  const beforeDistance = Math.abs(predictions[winnerSeat] - beforeWins);
+  const afterDistance = Math.abs(predictions[winnerSeat] - afterWins);
+  const scoreLead = Math.max(0, (scores[winnerSeat] || 0) - (scores[seat] || 0));
+  const leadWeight = 1 + scoreLead / 20;
+  let impact = 0;
+
+  if (afterDistance > beforeDistance) impact += params.opponentFailPressure * leadWeight;
+  else if (afterDistance < beforeDistance) impact -= params.opponentFailPressure * leadWeight;
+
+  if (scoreLead > 0 && afterDistance > beforeDistance) impact += params.leaderSabotage * leadWeight;
+  if ((scores[seat] || 0) < (scores[winnerSeat] || 0)) impact += params.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
+  return impact;
 }
 
 function determineTrickWinner(played) {
@@ -233,7 +256,10 @@ function mutateParams(params, random, iteration) {
     normalPowerScale: [24, 55],
     missGoalPenalty: [0, 8],
     forcedWinPenalty: [0, 5],
-    burnPowerWhenSafe: [-0.5, 1.2]
+    burnPowerWhenSafe: [-0.5, 1.2],
+    leaderSabotage: [0, 2.5],
+    opponentFailPressure: [0, 2],
+    protectTrailingSelf: [0, 1.5]
   };
 
   for (const [key, [min, max]] of Object.entries(ranges)) {
