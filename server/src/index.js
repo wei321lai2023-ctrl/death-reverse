@@ -316,6 +316,16 @@ function markContinue(room, seat) {
   }
 }
 
+function forceContinue(room) {
+  if (room.phase === "trickResult") {
+    continueAfterTrick(room);
+    return;
+  }
+  if (room.phase === "roundEnd") {
+    startRound(room, room.round + 1);
+  }
+}
+
 function resetRoomForRematch(room) {
   clearTimeout(room.botTimer);
   room.phase = "lobby";
@@ -635,6 +645,14 @@ io.on("connection", (socket) => {
     const player = room.players.find((entry) => entry?.socketId === socket.id);
     if (!player) return;
     markContinue(room, player.seat);
+  });
+
+  socket.on("forceContinue", ({ code } = {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room || !["trickResult", "roundEnd"].includes(room.phase)) return;
+    const player = room.players.find((entry) => entry?.socketId === socket.id);
+    if (!player || player.playerId !== room.ownerPlayerId) return emitError(socket, "Only the room owner can force continue.");
+    forceContinue(room);
   });
 
   socket.on("playAgain", ({ code } = {}) => {

@@ -326,14 +326,26 @@ function ContinuePanel({ state, socket, label }) {
   const humanSeats = state.players.filter((player) => !player.empty && !player.isBot && player.connected).map((player) => player.seat);
   const readyCount = humanSeats.filter((seat) => state.continueVotes?.[seat]).length;
   const alreadyReady = Boolean(state.continueVotes?.[state.mySeat]);
+  const waitingNames = humanSeats.filter((seat) => !state.continueVotes?.[seat]).map((seat) => state.players[seat]?.name || `Seat ${seat + 1}`);
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-stone-300 bg-white p-3">
       <div className="text-sm text-stone-600">
-        Continue votes: <strong className="text-stone-900">{readyCount}</strong> / {humanSeats.length}
+        <div>
+          Continue votes: <strong className="text-stone-900">{readyCount}</strong> / {humanSeats.length}
+        </div>
+        {waitingNames.length > 0 && <div className="mt-1">Waiting: {waitingNames.join(", ")}</div>}
+        {alreadyReady && <div className="mt-1 text-xs text-stone-500">You can click again if the room looks stuck.</div>}
       </div>
-      <button className={alreadyReady ? "secondary-btn" : "primary-btn"} disabled={alreadyReady} onClick={() => socket.emit("continueGame", { code: state.code })}>
-        <Play size={18} /> {alreadyReady ? "Waiting for others" : label}
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button className={alreadyReady ? "secondary-btn" : "primary-btn"} onClick={() => socket.emit("continueGame", { code: state.code })}>
+          <Play size={18} /> {alreadyReady ? "Send again" : label}
+        </button>
+        {state.isOwner && (
+          <button className="secondary-btn" onClick={() => socket.emit("forceContinue", { code: state.code })}>
+            Force continue
+          </button>
+        )}
+      </div>
     </div>
   );
 }
