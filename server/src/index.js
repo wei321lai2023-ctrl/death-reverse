@@ -541,11 +541,13 @@ function scoreOpponentImpact(room, seat, winnerSeat) {
   const prediction = room.predictions[winnerSeat]?.value;
   if (prediction === undefined) return 0;
 
+  const selfScore = room.scores[seat] || 0;
+  const winnerScore = room.scores[winnerSeat] || 0;
   const beforeWins = room.actualWins[winnerSeat] || 0;
   const afterWins = beforeWins + 1;
   const beforeDistance = Math.abs(prediction - beforeWins);
   const afterDistance = Math.abs(prediction - afterWins);
-  const scoreLead = Math.max(0, (room.scores[winnerSeat] || 0) - (room.scores[seat] || 0));
+  const scoreLead = Math.max(0, winnerScore - selfScore);
   const leadWeight = 1 + scoreLead / 20;
   let impact = 0;
 
@@ -559,7 +561,16 @@ function scoreOpponentImpact(room, seat, winnerSeat) {
     impact += botParams.leaderSabotage * leadWeight;
   }
 
-  if ((room.scores[seat] || 0) < (room.scores[winnerSeat] || 0)) {
+  if (prediction === 0 && beforeWins === 0) {
+    const lateRoundWeight = 1 + room.round / FINAL_ROUND;
+    const zeroSuccessScore = winnerScore + room.round;
+    impact += botParams.zeroPredictionPressure * lateRoundWeight * leadWeight;
+    if (zeroSuccessScore >= selfScore) {
+      impact += botParams.zeroClimberPressure * (1 + Math.max(0, zeroSuccessScore - selfScore) / 20);
+    }
+  }
+
+  if (selfScore < winnerScore) {
     impact += botParams.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
   }
 

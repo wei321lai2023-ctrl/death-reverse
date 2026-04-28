@@ -168,7 +168,7 @@ function chooseCard({ hand, played, seat, round, trickNumber, prediction, actual
     const reverseRisk = card.type === "number" && REVERSE_VALUES.has(card.value) ? params.reverseRisk : 0;
     const deathBonus = card.type === "death" ? params.deathAvoidPenalty : 0;
     const zeroVsDeathBonus = card.type === "zero" && played.some((entry) => entry.card.type === "death") ? params.zeroVsDeathBonus : 0;
-    const opponentImpact = scoreOpponentImpact({ seat, winnerSeat: winnerIfPlayed, predictions, actualWinsBySeat, scores, params });
+    const opponentImpact = scoreOpponentImpact({ seat, winnerSeat: winnerIfPlayed, round, predictions, actualWinsBySeat, scores, params });
     const jitter = (random() - 0.5) * 0.03;
 
     if (shouldTryWin) {
@@ -180,13 +180,15 @@ function chooseCard({ hand, played, seat, round, trickNumber, prediction, actual
   return scored[0].card;
 }
 
-function scoreOpponentImpact({ seat, winnerSeat, predictions, actualWinsBySeat, scores, params }) {
+function scoreOpponentImpact({ seat, winnerSeat, round, predictions, actualWinsBySeat, scores, params }) {
   if (winnerSeat === seat || predictions[winnerSeat] === undefined) return 0;
+  const selfScore = scores[seat] || 0;
+  const winnerScore = scores[winnerSeat] || 0;
   const beforeWins = actualWinsBySeat[winnerSeat] || 0;
   const afterWins = beforeWins + 1;
   const beforeDistance = Math.abs(predictions[winnerSeat] - beforeWins);
   const afterDistance = Math.abs(predictions[winnerSeat] - afterWins);
-  const scoreLead = Math.max(0, (scores[winnerSeat] || 0) - (scores[seat] || 0));
+  const scoreLead = Math.max(0, winnerScore - selfScore);
   const leadWeight = 1 + scoreLead / 20;
   let impact = 0;
 
@@ -194,7 +196,15 @@ function scoreOpponentImpact({ seat, winnerSeat, predictions, actualWinsBySeat, 
   else if (afterDistance < beforeDistance) impact -= params.opponentFailPressure * leadWeight;
 
   if (scoreLead > 0 && afterDistance > beforeDistance) impact += params.leaderSabotage * leadWeight;
-  if ((scores[seat] || 0) < (scores[winnerSeat] || 0)) impact += params.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
+  if (predictions[winnerSeat] === 0 && beforeWins === 0) {
+    const lateRoundWeight = 1 + round / FINAL_ROUND;
+    const zeroSuccessScore = winnerScore + round;
+    impact += params.zeroPredictionPressure * lateRoundWeight * leadWeight;
+    if (zeroSuccessScore >= selfScore) {
+      impact += params.zeroClimberPressure * (1 + Math.max(0, zeroSuccessScore - selfScore) / 20);
+    }
+  }
+  if (selfScore < winnerScore) impact += params.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
   return impact;
 }
 
@@ -259,7 +269,9 @@ function mutateParams(params, random, iteration) {
     burnPowerWhenSafe: [-0.5, 1.2],
     leaderSabotage: [0, 2.5],
     opponentFailPressure: [0, 2],
-    protectTrailingSelf: [0, 1.5]
+    protectTrailingSelf: [0, 1.5],
+    zeroPredictionPressure: [0, 4],
+    zeroClimberPressure: [0, 3]
   };
 
   for (const [key, [min, max]] of Object.entries(ranges)) {

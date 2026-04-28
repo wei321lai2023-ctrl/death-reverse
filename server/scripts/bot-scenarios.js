@@ -98,6 +98,24 @@ const scenarios = [
     ],
     hand: [number(2), death()],
     note: "Seat 2 is leading but still needs one. Helping them win is bad."
+  },
+  {
+    name: "Break a zero prediction before it pays",
+    seat: 4,
+    round: 7,
+    trickNumber: 4,
+    prediction: 1,
+    actualWins: 1,
+    predictions: [1, 0, 2, 1, 1],
+    actualWinsBySeat: [1, 0, 2, 1, 1],
+    scores: [4, 11, 5, 2, 8],
+    played: [
+      play(1, number(28)),
+      play(2, number(14)),
+      play(3, number(9))
+    ],
+    hand: [number(2), death()],
+    note: "Seat 2 predicted 0. Letting them win this trick breaks a high-value zero prediction."
   }
 ];
 
@@ -150,12 +168,14 @@ function analyzeScenario(scenario) {
 
 function scoreOpponentImpact(scenario, winnerSeat) {
   if (winnerSeat === scenario.seat || !scenario.predictions) return 0;
+  const selfScore = scenario.scores?.[scenario.seat] || 0;
+  const winnerScore = scenario.scores?.[winnerSeat] || 0;
   const beforeWins = scenario.actualWinsBySeat?.[winnerSeat] || 0;
   const afterWins = beforeWins + 1;
   const prediction = scenario.predictions[winnerSeat];
   const beforeDistance = Math.abs(prediction - beforeWins);
   const afterDistance = Math.abs(prediction - afterWins);
-  const scoreLead = Math.max(0, (scenario.scores?.[winnerSeat] || 0) - (scenario.scores?.[scenario.seat] || 0));
+  const scoreLead = Math.max(0, winnerScore - selfScore);
   const leadWeight = 1 + scoreLead / 20;
   let impact = 0;
 
@@ -163,7 +183,15 @@ function scoreOpponentImpact(scenario, winnerSeat) {
   else if (afterDistance < beforeDistance) impact -= botParams.opponentFailPressure * leadWeight;
 
   if (scoreLead > 0 && afterDistance > beforeDistance) impact += botParams.leaderSabotage * leadWeight;
-  if ((scenario.scores?.[scenario.seat] || 0) < (scenario.scores?.[winnerSeat] || 0)) impact += botParams.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
+  if (prediction === 0 && beforeWins === 0) {
+    const lateRoundWeight = 1 + scenario.round / 9;
+    const zeroSuccessScore = winnerScore + scenario.round;
+    impact += botParams.zeroPredictionPressure * lateRoundWeight * leadWeight;
+    if (zeroSuccessScore >= selfScore) {
+      impact += botParams.zeroClimberPressure * (1 + Math.max(0, zeroSuccessScore - selfScore) / 20);
+    }
+  }
+  if (selfScore < winnerScore) impact += botParams.protectTrailingSelf * (afterDistance > beforeDistance ? 1 : -0.5);
   return impact;
 }
 
