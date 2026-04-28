@@ -8,6 +8,11 @@ const REVERSE_VALUES = new Set([11, 22, 33]);
 const PARAM_PATH = path.resolve("src/bot-params.json");
 
 const args = parseArgs(process.argv.slice(2));
+if (args.selfTest) {
+  runSelfTest();
+  process.exit(0);
+}
+
 const iterations = Number(args.iterations ?? args.i ?? 40);
 const gamesPerCandidate = Number(args.games ?? args.g ?? 120);
 const seed = Number(args.seed ?? Date.now());
@@ -167,12 +172,23 @@ function chooseCard({ hand, played, seat, round, trickNumber, prediction, actual
     const jitter = (random() - 0.5) * 0.03;
 
     if (shouldTryWin) {
-      return { card, score: (currentlyWinning ? params.winBonus : 0) + power + zeroVsDeathBonus - reverseRisk + jitter };
+      return { card, currentlyWinning, score: power + zeroVsDeathBonus - reverseRisk + jitter };
     }
-    return { card, score: (currentlyWinning ? params.losePenalty : 0) - power - deathBonus + reverseRisk + jitter };
+    return { card, currentlyWinning, score: -power - deathBonus + reverseRisk + jitter };
   });
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0].card;
+
+  const winningCards = scored.filter((entry) => entry.currentlyWinning);
+  const losingCards = scored.filter((entry) => !entry.currentlyWinning);
+  const pool = shouldTryWin ? winningCards : losingCards;
+  const fallbackPool = shouldTryWin ? losingCards : winningCards;
+  const candidates = pool.length ? pool : fallbackPool;
+
+  if (shouldTryWin && !pool.length) {
+    candidates.sort((a, b) => a.score - b.score);
+  } else {
+    candidates.sort((a, b) => b.score - a.score);
+  }
+  return candidates[0].card;
 }
 
 function determineTrickWinner(played) {
@@ -266,4 +282,31 @@ function makeRng(initialSeed) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+function runSelfTest() {
+  const hand = [
+    { id: "death", type: "death", value: null, label: "Death" },
+    { id: "n-3", type: "number", value: 3, label: "3" }
+  ];
+  const played = [
+    { seat: 1, card: { id: "n-12", type: "number", value: 12, label: "12" }, order: 0 },
+    { seat: 2, card: { id: "n-20", type: "number", value: 20, label: "20" }, order: 1 },
+    { seat: 3, card: { id: "z-1", type: "zero", value: 0, label: "0" }, order: 2 }
+  ];
+  const card = chooseCard({
+    hand,
+    played,
+    seat: 4,
+    round: 2,
+    trickNumber: 2,
+    prediction: 1,
+    actualWins: 0,
+    params: baseParams,
+    random: () => 0.5
+  });
+  if (card.type === "death") {
+    throw new Error("Bot should not spend Death when 0 already makes Death lose.");
+  }
+  console.log("Self-test passed.");
 }
