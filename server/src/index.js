@@ -462,9 +462,9 @@ function chooseBotCard(room, seat, shouldTryWin) {
     const zeroVsDeathBonus = card.type === "zero" && room.played.some((entry) => entry.card.type === "death") ? botParams.zeroVsDeathBonus : 0;
 
     if (shouldTryWin) {
-      return { card, score: (currentlyWinning ? botParams.winBonus : 0) + power + zeroVsDeathBonus - reverseRisk };
+      return { card, score: currentlyWinning ? botParams.winBonus + power + zeroVsDeathBonus - reverseRisk : -botParams.missGoalPenalty - power };
     }
-    return { card, score: (currentlyWinning ? botParams.losePenalty : 0) - power - deathBonus + reverseRisk };
+    return { card, score: (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk };
   });
 
   scored.sort((a, b) => b.score - a.score);

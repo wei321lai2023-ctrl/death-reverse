@@ -66,7 +66,7 @@ function evaluateCandidate(candidate, games, random) {
     candidateScore += scores[0];
     baselineScore += (scores[1] + scores[2] + scores[3] + scores[4]) / 4;
   }
-  return (candidateScore - baselineScore) / games;
+  return (candidateScore - baselineScore) / games - scenarioPenalty(candidate);
 }
 
 function playGame(paramsBySeat, random) {
@@ -167,9 +167,9 @@ function chooseCard({ hand, played, seat, round, trickNumber, prediction, actual
     const jitter = (random() - 0.5) * 0.03;
 
     if (shouldTryWin) {
-      return { card, score: (currentlyWinning ? params.winBonus : 0) + power + zeroVsDeathBonus - reverseRisk + jitter };
+      return { card, score: currentlyWinning ? params.winBonus + power + zeroVsDeathBonus - reverseRisk + jitter : -params.missGoalPenalty - power + jitter };
     }
-    return { card, score: (currentlyWinning ? params.losePenalty : 0) - power - deathBonus + reverseRisk + jitter };
+    return { card, score: (currentlyWinning ? params.losePenalty - params.forcedWinPenalty : 0) - power + power * params.burnPowerWhenSafe - deathBonus + reverseRisk + jitter };
   });
   scored.sort((a, b) => b.score - a.score);
   return scored[0].card;
@@ -230,7 +230,10 @@ function mutateParams(params, random, iteration) {
     deathPower: [1.2, 4],
     zeroPower: [-0.2, 1],
     reversePower: [0.2, 1.6],
-    normalPowerScale: [24, 55]
+    normalPowerScale: [24, 55],
+    missGoalPenalty: [0, 8],
+    forcedWinPenalty: [0, 5],
+    burnPowerWhenSafe: [-0.5, 1.2]
   };
 
   for (const [key, [min, max]] of Object.entries(ranges)) {
@@ -266,4 +269,69 @@ function makeRng(initialSeed) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+function scenarioPenalty(params) {
+  let penalty = 0;
+  const cases = [
+    {
+      expectedNot: "Death",
+      context: {
+        hand: [deathCard(), numberCard(3)],
+        played: [scenarioPlay(1, numberCard(12)), scenarioPlay(2, numberCard(20)), scenarioPlay(3, zeroCard(1))],
+        seat: 4,
+        round: 2,
+        trickNumber: 2,
+        prediction: 1,
+        actualWins: 0
+      }
+    },
+    {
+      expected: "Death",
+      context: {
+        hand: [deathCard(), numberCard(2)],
+        played: [scenarioPlay(1, numberCard(31)), scenarioPlay(2, numberCard(4)), scenarioPlay(3, numberCard(8))],
+        seat: 4,
+        round: 5,
+        trickNumber: 4,
+        prediction: 2,
+        actualWins: 1
+      }
+    },
+    {
+      expected: "35",
+      context: {
+        hand: [numberCard(2), numberCard(35), zeroCard(1)],
+        played: [scenarioPlay(1, numberCard(22)), scenarioPlay(2, numberCard(19)), scenarioPlay(3, numberCard(7))],
+        seat: 4,
+        round: 5,
+        trickNumber: 3,
+        prediction: 1,
+        actualWins: 1
+      }
+    }
+  ];
+
+  for (const item of cases) {
+    const chosen = chooseCard({ ...item.context, params, random: () => 0.5 });
+    if (item.expected && chosen.label !== item.expected) penalty += 3;
+    if (item.expectedNot && chosen.label === item.expectedNot) penalty += 3;
+  }
+  return penalty;
+}
+
+function scenarioPlay(seat, card) {
+  return { seat, card, order: 0 };
+}
+
+function numberCard(value) {
+  return { id: `n-${value}`, type: "number", value, label: String(value) };
+}
+
+function zeroCard(copy) {
+  return { id: `z-${copy}`, type: "zero", value: 0, label: "0" };
+}
+
+function deathCard() {
+  return { id: "death", type: "death", value: null, label: "Death" };
 }

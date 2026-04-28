@@ -90,8 +90,8 @@ function analyzeScenario(scenario) {
     const deathBonus = card.type === "death" ? botParams.deathAvoidPenalty : 0;
     const zeroVsDeathBonus = card.type === "zero" && scenario.played.some((entry) => entry.card.type === "death") ? botParams.zeroVsDeathBonus : 0;
     const score = shouldTryWin
-      ? (currentlyWinning ? botParams.winBonus : 0) + power + zeroVsDeathBonus - reverseRisk
-      : (currentlyWinning ? botParams.losePenalty : 0) - power - deathBonus + reverseRisk;
+      ? currentlyWinning ? botParams.winBonus + power + zeroVsDeathBonus - reverseRisk : -botParams.missGoalPenalty - power
+      : (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk;
     return {
       card: card.label,
       winsNow: currentlyWinning,
