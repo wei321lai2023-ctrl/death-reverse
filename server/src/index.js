@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3001;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || true;
 const PLAYER_COUNT = 5;
 const FINAL_ROUND = 9;
+const CONTINUE_TIMEOUT_MS = 30000;
 const REVERSE_VALUES = new Set([11, 22, 33]);
 const BOT_NAMES = ["Bot Ada", "Bot Ben", "Bot Cora", "Bot Dex", "Bot Eve"];
 
@@ -83,6 +84,8 @@ function makeRoom(owner) {
     roundSummary: null,
     finalResults: null,
     botTimer: null,
+    continueTimer: null,
+    continueDeadlineAt: null,
     botCounter: 0
   };
   room.players[0] = { ...owner, seat: 0, ready: false, connected: true };
@@ -141,6 +144,7 @@ function stateFor(room, socketId) {
     lastTrick: room.lastTrick,
     trickHistory: room.trickHistory,
     continueVotes: room.continueVotes,
+    continueDeadlineAt: room.continueDeadlineAt,
     roundSummary: room.roundSummary,
     finalResults: room.finalResults
   };
@@ -197,6 +201,7 @@ function maybeStartGame(room) {
 }
 
 function startRound(room, round) {
+  clearContinueTimer(room);
   const deck = shuffle(makeDeck());
   room.phase = "prediction";
   room.round = round;
@@ -227,10 +232,28 @@ function sortCards(a, b) {
 function maybeStartTricks(room) {
   if (room.phase !== "prediction") return;
   if (Object.keys(room.predictions).length !== PLAYER_COUNT) return;
+  clearContinueTimer(room);
   room.phase = "trick";
   room.currentTurnSeat = room.leaderSeat;
   room.played = [];
   emitAndSchedule(room);
+}
+
+function clearContinueTimer(room) {
+  clearTimeout(room.continueTimer);
+  room.continueTimer = null;
+  room.continueDeadlineAt = null;
+}
+
+function scheduleContinueTimer(room) {
+  clearContinueTimer(room);
+  const deadline = Date.now() + CONTINUE_TIMEOUT_MS;
+  room.continueDeadlineAt = deadline;
+  room.continueTimer = setTimeout(() => {
+    if (!["trickResult", "roundEnd"].includes(room.phase)) return;
+    if (room.continueDeadlineAt !== deadline) return;
+    forceContinue(room);
+  }, CONTINUE_TIMEOUT_MS);
 }
 
 function determineTrickWinner(played) {
@@ -271,11 +294,13 @@ function finishTrick(room) {
   room.phase = "trickResult";
   room.currentTurnSeat = null;
   room.continueVotes = Object.fromEntries(room.players.map((player, seat) => [seat, Boolean(player?.isBot)]));
+  scheduleContinueTimer(room);
   emitRoom(room);
 }
 
 function continueAfterTrick(room) {
   if (room.phase !== "trickResult") return;
+  clearContinueTimer(room);
   if (room.trickNumber >= room.round) {
     finishRound(room);
     return;
@@ -328,6 +353,7 @@ function forceContinue(room) {
 
 function resetRoomForRematch(room) {
   clearTimeout(room.botTimer);
+  clearContinueTimer(room);
   room.phase = "lobby";
   room.round = 0;
   room.trickNumber = 0;
@@ -376,6 +402,7 @@ function finishRound(room) {
   };
 
   if (room.round >= FINAL_ROUND) {
+    clearContinueTimer(room);
     room.phase = "gameOver";
     room.finalResults = room.players
       .map((player, seat) => ({ seat, name: player.name, score: room.scores[seat] || 0 }))
@@ -388,6 +415,7 @@ function finishRound(room) {
   room.currentTurnSeat = null;
   room.played = [];
   room.continueVotes = Object.fromEntries(room.players.map((player, seat) => [seat, Boolean(player?.isBot)]));
+  scheduleContinueTimer(room);
   emitRoom(room);
 }
 
@@ -612,6 +640,8 @@ io.on("connection", (socket) => {
       room.players[playerIndex] = null;
       const humanPlayers = room.players.filter((player) => player && !player.isBot);
       if (humanPlayers.length === 0) {
+        clearTimeout(room.botTimer);
+        clearContinueTimer(room);
         rooms.delete(room.code);
         return;
       }

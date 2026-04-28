@@ -327,6 +327,16 @@ function ContinuePanel({ state, socket, label }) {
   const readyCount = humanSeats.filter((seat) => state.continueVotes?.[seat]).length;
   const alreadyReady = Boolean(state.continueVotes?.[state.mySeat]);
   const waitingNames = humanSeats.filter((seat) => !state.continueVotes?.[seat]).map((seat) => state.players[seat]?.name || `Seat ${seat + 1}`);
+  const [now, setNow] = useState(Date.now());
+  const secondsLeft = state.continueDeadlineAt ? Math.max(0, Math.ceil((state.continueDeadlineAt - now) / 1000)) : null;
+
+  useEffect(() => {
+    if (!state.continueDeadlineAt) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, [state.continueDeadlineAt]);
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-stone-300 bg-white p-3">
       <div className="text-sm text-stone-600">
@@ -334,6 +344,7 @@ function ContinuePanel({ state, socket, label }) {
           Continue votes: <strong className="text-stone-900">{readyCount}</strong> / {humanSeats.length}
         </div>
         {waitingNames.length > 0 && <div className="mt-1">Waiting: {waitingNames.join(", ")}</div>}
+        {secondsLeft !== null && <div className="mt-1 text-xs font-semibold text-stone-700">Auto continues in {secondsLeft}s</div>}
         {alreadyReady && <div className="mt-1 text-xs text-stone-500">You can click again if the room looks stuck.</div>}
       </div>
       <div className="flex flex-wrap gap-2">
