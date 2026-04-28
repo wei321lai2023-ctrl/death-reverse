@@ -109,7 +109,7 @@ function visiblePredictions(room, viewerSeat) {
   const result = {};
   for (const [seat, prediction] of Object.entries(room.predictions)) {
     const numericSeat = Number(seat);
-    const canReveal = room.phase === "roundEnd" || room.phase === "gameOver" || room.phase === "trickResult" || numericSeat === viewerSeat || !prediction.hidden;
+    const canReveal = room.phase === "roundEnd" || room.phase === "gameOver" || numericSeat === viewerSeat || !prediction.hidden;
     result[seat] = {
       submitted: true,
       hidden: prediction.hidden && !canReveal,
