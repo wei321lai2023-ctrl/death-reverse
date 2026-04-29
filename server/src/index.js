@@ -58,6 +58,10 @@ function nextSeat(seat) {
   return (seat + 1) % PLAYER_COUNT;
 }
 
+function relativeSeat(seat, leaderSeat) {
+  return (seat - leaderSeat + PLAYER_COUNT) % PLAYER_COUNT;
+}
+
 function seatOrderFrom(seat) {
   return Array.from({ length: PLAYER_COUNT }, (_, i) => (seat + i) % PLAYER_COUNT);
 }
@@ -525,15 +529,113 @@ function chooseBotCard(room, seat, shouldTryWin) {
     const deathBonus = card.type === "death" ? botParams.deathAvoidPenalty : 0;
     const zeroVsDeathBonus = card.type === "zero" && room.played.some((entry) => entry.card.type === "death") ? botParams.zeroVsDeathBonus : 0;
     const opponentImpact = scoreOpponentImpact(room, seat, winnerIfPlayed);
+    const lookaheadBonus = zeroLookaheadBonus(room, seat, projected);
 
     if (shouldTryWin) {
-      return { card, score: (currentlyWinning ? botParams.winBonus + power + zeroVsDeathBonus - reverseRisk : -botParams.missGoalPenalty - power) + opponentImpact };
+      return { card, currentlyWinning, lookaheadBonus, score: (currentlyWinning ? botParams.winBonus + power + zeroVsDeathBonus - reverseRisk : -botParams.missGoalPenalty - power) + opponentImpact + lookaheadBonus };
     }
-    return { card, score: (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk + opponentImpact };
+    return { card, currentlyWinning, lookaheadBonus, score: (currentlyWinning ? botParams.losePenalty - botParams.forcedWinPenalty : 0) - power + power * botParams.burnPowerWhenSafe - deathBonus + reverseRisk + opponentImpact + lookaheadBonus };
   });
 
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0].card;
+  const hasDirectZeroPressure = scored.some((entry) => entry.lookaheadBonus > 0);
+  const finalized = scored.map((entry) => {
+    const setupBonus = hasDirectZeroPressure ? 0 : zeroSetupPressureBonus(room, seat, entry.currentlyWinning);
+    return { ...entry, score: entry.score + setupBonus };
+  });
+
+  finalized.sort((a, b) => b.score - a.score);
+  return finalized[0].card;
+}
+
+function zeroLookaheadBonus(room, seat, projected) {
+  if (room.round < (botParams.zeroLookaheadMinRound || 6)) return 0;
+  let bonus = 0;
+  for (const targetSeat of remainingSeatsAfter(projected, seat)) {
+    const prediction = room.predictions[targetSeat];
+    if (!prediction || prediction.hidden || prediction.value !== 0 || (room.actualWins[targetSeat] || 0) > 0) continue;
+
+    const forceChance = estimateZeroTargetForceChance(room, seat, targetSeat, projected);
+    if (forceChance <= 0) continue;
+
+    const selfScore = room.scores[seat] || 0;
+    const targetScore = room.scores[targetSeat] || 0;
+    const leaderWeight = 1 + Math.max(0, targetScore - selfScore) / 18;
+    const climberWeight = targetScore + room.round >= selfScore ? 1.4 : 1;
+    const lateWeight = 1 + room.round / FINAL_ROUND;
+    bonus += forceChance * lateWeight * leaderWeight * climberWeight * (botParams.zeroLookaheadPressure || 0);
+  }
+  return bonus;
+}
+
+function remainingSeatsAfter(played, currentSeat) {
+  const playedSeats = new Set(played.map((entry) => entry.seat));
+  const seats = [];
+  let seat = nextSeat(currentSeat);
+  while (!playedSeats.has(seat)) {
+    seats.push(seat);
+    seat = nextSeat(seat);
+  }
+  return seats;
+}
+
+function estimateZeroTargetForceChance(room, seat, targetSeat, projected) {
+  const targetHandCount = room.hands[targetSeat]?.length || 0;
+  if (!targetHandCount) return 0;
+
+  const knownCards = new Set();
+  for (const card of room.hands[seat] || []) {
+    knownCards.add(card.id);
+  }
+  for (const entry of [...room.played, ...room.trickHistory.flatMap((trick) => trick.played || [])]) {
+    knownCards.add(entry.card.id);
+  }
+  for (const entry of projected) {
+    knownCards.add(entry.card.id);
+  }
+
+  let winningUnknown = 0;
+  let unknownCount = 0;
+  for (const card of makeDeck()) {
+    if (knownCards.has(card.id)) continue;
+    unknownCount += 1;
+    if (determineTrickWinner([...projected, { seat: targetSeat, card, order: projected.length }]) === targetSeat) {
+      winningUnknown += 1;
+    }
+  }
+
+  if (unknownCount === 0) return 0;
+  const drawChance = Math.min(1, targetHandCount / unknownCount);
+  return Math.min(1, (winningUnknown / unknownCount) * targetHandCount * drawChance);
+}
+
+function zeroSetupPressureBonus(room, seat, currentlyWinning) {
+  if (!currentlyWinning || room.round < (botParams.zeroSetupMinRound || 6)) return 0;
+  const selfPrediction = room.predictions[seat]?.value ?? 0;
+  const selfActual = room.actualWins[seat] || 0;
+  const selfMissCost = selfPrediction === selfActual ? Math.max(2, room.round / 2) : 0;
+  const selfScore = room.scores[seat] || 0;
+  let bestSetup = 0;
+
+  for (let targetSeat = 0; targetSeat < PLAYER_COUNT; targetSeat += 1) {
+    if (targetSeat === seat) continue;
+    const prediction = room.predictions[targetSeat];
+    if (!prediction || prediction.hidden || prediction.value !== 0 || (room.actualWins[targetSeat] || 0) > 0) continue;
+
+    const targetScore = room.scores[targetSeat] || 0;
+    const targetThreatScore = targetScore + room.round;
+    if (targetScore <= selfScore && targetThreatScore < selfScore) continue;
+
+    const targetOrderIfLeadNext = relativeSeat(targetSeat, seat);
+    if (targetOrderIfLeadNext < 3) continue;
+
+    const orderWeight = targetOrderIfLeadNext / 4;
+    const swing = room.round + 2;
+    const scoreThreat = 1 + Math.max(0, targetThreatScore - selfScore) / 18;
+    const value = (swing * orderWeight * scoreThreat * (botParams.zeroSetupPressure || 0)) / 6 - selfMissCost * 0.55;
+    bestSetup = Math.max(bestSetup, value);
+  }
+
+  return Math.max(0, bestSetup);
 }
 
 function scoreOpponentImpact(room, seat, winnerSeat) {

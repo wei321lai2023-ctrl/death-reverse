@@ -26,5 +26,9 @@
   "opponentFailPressure": 1.491,
   "protectTrailingSelf": 0.5063,
   "zeroPredictionPressure": 2.1134,
-  "zeroClimberPressure": 2.2973
+  "zeroClimberPressure": 2.2973,
+  "zeroLookaheadPressure": 3.6,
+  "zeroLookaheadMinRound": 6,
+  "zeroSetupPressure": 1,
+  "zeroSetupMinRound": 6
 }

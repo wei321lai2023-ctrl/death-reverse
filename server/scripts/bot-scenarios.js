@@ -116,6 +116,20 @@ const scenarios = [
     ],
     hand: [number(2), death()],
     note: "Seat 2 predicted 0. Letting them win this trick breaks a high-value zero prediction."
+  },
+  {
+    name: "Prefer pressure against a late zero predictor",
+    seat: 1,
+    round: 8,
+    trickNumber: 3,
+    prediction: 1,
+    actualWins: 0,
+    predictions: [2, 1, 2, 0, 1],
+    actualWinsBySeat: [1, 0, 1, 0, 1],
+    scores: [6, 4, 8, 18, 7],
+    played: [play(0, number(18))],
+    hand: [number(21), number(38), death()],
+    note: "Seat 4 predicted 0 and is dangerous. The bot should value plays that make their later position more awkward."
   }
 ];
 
